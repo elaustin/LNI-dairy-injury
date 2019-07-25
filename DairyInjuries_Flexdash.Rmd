@@ -1,0 +1,521 @@
+---
+title: "WA State Claims Data - LNI data request"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    social: menu
+    source_code: embed
+    theme: cerulean
+runtime: shiny
+---
+
+```{r global, include=FALSE}
+# load data in 'global' chunk so it can be shared by all users of the dashboard
+library(pacman)
+p_load(datasets, ggplot2, data.table, shiny, shinyWidgets, readxl,scales, plyr,stringr,DT)
+
+soc = setDT(read.csv("soc-structure-2000.csv"))
+
+data = data.table(read_excel("../LNI data request/130656-Records.xlsx", sheet = "SF Claims Data"))
+
+data$`Oiics Accdt Type Code 3` = str_pad(data$`Oiics Accdt Type Code 3`, 3, pad = "0")
+
+denom = data.table(read_excel("../LNI data request/130656-Records.xlsx", sheet =  " SF Hours Class 7301-00", skip = 4))
+setnames(denom, c("year", "acct.id.q1","total.hours.q1",
+                  "acct.id.q2","total.hours.q2",
+                  "acct.id.q3","total.hours.q3",
+                  "acct.id.q4","total.hours.q4"))
+denom[, total.hours := total.hours.q1 + total.hours.q2 + total.hours.q3 + total.hours.q4]
+denom[, worker_n := total.hours/(200000/100)]
+denom[, acct.id := rowMeans(.SD), .SDcols = c("acct.id.q1", "acct.id.q2",
+                                        "acct.id.q3", "acct.id.q4")]
+
+myvals = data.table(soc2k = "temp", type = "temp")
+
+myvals = lapply(unique(data[!is.na(`Soc2K Code Description`)]$`Soc2K Code Description`), 
+       FUN = function(value){
+  temp = unlist(grep(value, unique(soc$Management.Occupations), value = TRUE))[1]
+  temp1 = data.table(soc2k = temp, type = value)
+  temp1
+})
+
+myvals = rbindlist(myvals)
+myvals = myvals[!is.na(soc2k) & !is.na(type)]
+
+setkey(myvals, type)
+setkey(data, `Soc2K Code Description`)
+data = myvals[data]
+data[, `Soc2K Code Description` := soc2k]
+
+#data = data[!is.na(`Soc2K Code Description`)]
+#
+#create OIICS code list
+#
+
+oiics_source = readRDS("oiics_source.RDS")
+oiics_nature = readRDS("oiics_nature.RDS")
+oiics_bp = readRDS("oiics_bp.RDS")
+oiics_event = readRDS("oiics_event.RDS")
+
+data[, year := as.numeric(as.character((`Injry Date Year`)))]
+
+```
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+```
+
+General Claims Descriptions
+===================================== 
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+
+
+
+```{r}
+
+#add cost/injury
+##add link to OIICS descriptions
+#increase font
+#add tooltip
+#add masking to circumstances tool
+
+#width of pickerInput
+widthPI = 25
+
+my_choicesStatus <- data.table(choices = str_to_title(unique(data$`Status Desc`)))
+#setkey(my_choicesStatus, choices)
+my_choicesStatus2 = unique(data$`Status Desc`)
+names(my_choicesStatus2) <-
+  stringr::str_wrap(my_choicesStatus$choices, exdent = 2, width = widthPI)
+names(my_choicesStatus2) <- stringr::str_replace_all(names(my_choicesStatus2),
+                                               "\\n", "<br> &nbsp")
+
+pickerInput('status', 'Claims Status', unique(my_choicesStatus2),
+               selected = unique(my_choicesStatus2), multiple = T,
+                        options = list(
+      `actions-box` = TRUE, size = 10,
+      `selected-text-format` = "count > 5",
+      `live-search`=TRUE),
+      choicesOpt = list(
+      content = names(my_choicesStatus2)
+    ))
+
+selectInput('ycol', 'Plotting Variable', choices = 
+              list("Claims Rate (per 100 workers)" = "Claims Rate",
+                   "Number of Claims" = "Number of Claims",
+                   "Cost (Thousands of Dollars)" = "Total Cost"),
+            selected="Number of Claims", multiple = F)
+
+sliderInput("year", "Year:",
+            min = min(data$year), max = max(data$year),
+            step = 1,
+            value = c(min(data$year),
+                      max(data$year)))
+
+sliderInput("mincases", "Minimum number of Cases:", min = 1,
+            max = round_any(400,10, ceiling),
+            step = 10,
+            value = 10)
+
+my_choices <- data.table(choices = paste0(oiics_nature$CASE_CODE_TITLE, ": ",
+                    oiics_nature$CASE_CODE),
+                    CASE_CODE = oiics_nature$CASE_CODE,
+                    keyval = oiics_nature$CASE_CODE_TITLE,
+                    hier = nchar(oiics_nature$CASE_CODE))
+setkey(my_choices, hier, CASE_CODE)
+my_choices2 <- as.list(my_choices$CASE_CODE)
+names(my_choices2) <-
+  stringr::str_wrap(my_choices$choices, exdent = 2, width = widthPI)
+names(my_choices2) <- stringr::str_replace_all(names(my_choices2),
+                                               "\\n", "<br> &nbsp")
+
+pickerInput("nature", "Nature:",
+            choices = my_choices2,
+            selected = my_choices2,
+            multiple = T,
+            options = list(
+      `actions-box` = TRUE, size = 10,
+      `selected-text-format` = "count > 5",
+      `live-search`=TRUE),
+      choicesOpt = list(
+      content = names(my_choices2)
+    ))
+
+my_choices <- data.table(choices = paste0(oiics_bp$CASE_CODE_TITLE, ": ",
+                    oiics_bp$CASE_CODE),
+                    CASE_CODE = oiics_bp$CASE_CODE,
+                    keyval = oiics_bp$CASE_CODE_TITLE,
+                    hier = nchar(oiics_bp$CASE_CODE))
+setkey(my_choices, hier, CASE_CODE)
+my_choices2 <- as.list(my_choices$CASE_CODE)
+names(my_choices2) <-
+  stringr::str_wrap(my_choices$choices, exdent = 2, width = widthPI)
+names(my_choices2) <- stringr::str_replace_all(names(my_choices2),
+                                               "\\n", "<br> &nbsp")
+pickerInput("bp", "Body Part:",
+            choices = my_choices2,
+            multiple = T,
+            selected = my_choices2,
+            options = list(
+      `actions-box` = TRUE, size = 10,
+      `selected-text-format` = "count > 5",
+      `live-search`=TRUE),
+      choicesOpt = list(
+      content = names(my_choices2)
+    ))
+
+
+my_choices <- data.table(choices = paste0(oiics_source$CASE_CODE_TITLE, ": ",
+                    oiics_source$CASE_CODE),
+                    CASE_CODE = oiics_source$CASE_CODE,
+                    keyval = oiics_source$CASE_CODE_TITLE,
+                    hier = nchar(oiics_source$CASE_CODE))
+setkey(my_choices, hier, CASE_CODE)
+my_choices2 <- as.list(my_choices$CASE_CODE)
+names(my_choices2) <-
+  stringr::str_wrap(my_choices$choices, exdent = 2, width = widthPI)
+names(my_choices2) <- stringr::str_replace_all(names(my_choices2),
+                                               "\\n", "<br> &nbsp")
+
+pickerInput("source", "Source:",
+            choices = my_choices2,
+            selected = my_choices2,
+            multiple = T,
+            options = list(
+      `actions-box` = TRUE, size = 10,
+      `selected-text-format` = "count > 5",
+      `live-search`=TRUE),
+      choicesOpt = list(
+      content = names(my_choices2)
+    ))
+
+
+
+my_choices <- data.table(choices = paste0(oiics_event$CASE_CODE_TITLE, ": ",
+                    oiics_event$CASE_CODE),
+                    CASE_CODE = oiics_event$CASE_CODE,
+                    keyval = oiics_event$CASE_CODE_TITLE,
+                    hier = nchar(oiics_event$CASE_CODE))
+setkey(my_choices, hier, CASE_CODE)
+my_choices2 <- as.list(my_choices$CASE_CODE)
+names(my_choices2) <-
+  stringr::str_wrap(my_choices$choices, exdent = 2, width = widthPI)
+names(my_choices2) <- stringr::str_replace_all(names(my_choices2),
+                                               "\\n", "<br> &nbsp")
+pickerInput("event", "Event:",
+            choices = my_choices2,
+            selected = my_choices2,
+            multiple = T,
+            options = list(
+      `actions-box` = TRUE, size = 10,
+      `selected-text-format` = "count > 5",
+      `live-search`=TRUE),
+      choicesOpt = list(
+      content = names(my_choices2)
+    ))
+
+
+
+
+
+```
+
+
+Column {.tabset}
+-----------------------------------------------------------------------
+###Nature
+
+```{r}
+
+selectedData <- reactive({
+  newdata = copy(data)
+  newdata = newdata[year %in% input$year[1]:input$year[2] &
+                      newdata$`Status Desc` %in% input$status & 
+                      (newdata$`Oiics Srce Code 1` %in%
+                         input$source |
+                        newdata$`Oiics Srce Code 2` %in%
+                         input$source |
+                         newdata$`Oiics Srce Code 3` %in%
+                         input$source |
+                          newdata$`Injry Oiics Srce Code` %in%
+                         input$source) & 
+                      (newdata$`Oiics Nat Code 1` %in%
+                         input$nature |
+                        newdata$`Oiics Nat Code 2` %in%
+                         input$nature |
+                         newdata$`Oiics Nat Code 3` %in%
+                         input$nature |
+                          newdata$`Injry Oiics Nat Code` %in%
+                         input$nature) &
+                      (newdata$`Oiics Body Part Code 1` %in%
+                         input$bp |
+                        newdata$`Oiics Body Part Code 2` %in%
+                         input$bp |
+                         newdata$`Oiics Body Part Code 3` %in%
+                         input$bp |
+                          newdata$`Injry Oiics Body Part Code` %in%
+                         input$bp) &
+                       (newdata$`Oiics Accdt Type Code 1` %in%
+                         input$event |
+                        newdata$`Oiics Accdt Type Code 2` %in%
+                         input$event |
+                         newdata$`Oiics Accdt Type Code 3` %in%
+                         input$event |
+                          newdata$`Injry Oiics Accdt Type Code` %in%
+                         input$event),]
+  
+  newdata
+})
+
+naturetable <- reactive({
+  temp = selectedData()[, list(`Number of Claims` = 
+              length(unique(`Pseudo Claim Id`)),
+              `Total Cost` = 
+              sum(`Actuary Incur Tot`)/1000),
+     by = c( "Oiics Nat Code Desc 2") ][`Number of Claims`>=input$mincases,]
+temp[, `Claims Rate` := round(`Number of Claims`/(sum(denom[year %in% input$year[1]:input$year[2],]$total.hours)/200000),2)]
+setorderv(temp, input$ycol, order = -1)
+setnames(temp, "Oiics Nat Code Desc 2", "Description")
+temp
+})
+  
+                      
+  
+renderDataTable(datatable(naturetable()  , options = list(pageLength = 25,
+                                                          class = "display nowrap")) %>% 
+         formatCurrency(c("Total Cost"), digits = 0, currency = "K $", 
+         before = FALSE) %>%
+      formatStyle(input$ycol, backgroundColor = 'yellow'))
+
+natureplot <- reactive({
+  temp = selectedData()[, list(`Number of Claims` = 
+              length(unique(`Pseudo Claim Id`)),
+              `Total Cost` = 
+              sum(`Actuary Incur Tot`)/1000),
+     by = c( "Oiics Nat Code Desc 2", "year") ][`Number of Claims`>=((input$year[2]-input$year[1])/2+1),]
+temp[, `Claims Rate` := round(`Number of Claims`/(sum(denom[year %in% input$year[1]:input$year[2],]$total.hours)/200000),2)]
+setorderv(temp, input$ycol, order = -1)
+setnames(temp, input$ycol, "yval")
+setnames(temp, "Oiics Nat Code Desc 2", "Description")
+temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
+})
+
+
+
+```
+
+###Body Part
+```{r}
+
+bptable <- reactive({
+  temp = selectedData()[, list(`Number of Claims` = 
+              length(unique(`Pseudo Claim Id`)),
+              `Total Cost` = 
+              sum(`Actuary Incur Tot`)/1000),
+     by = c( "Oiics Body Part Code Desc") ][`Number of Claims`>=input$mincases,]
+temp[, `Claims Rate` := round(`Number of Claims`/(sum(denom[year %in% input$year[1]:input$year[2],]$total.hours)/200000),2)]
+setorderv(temp, input$ycol, order = -1)
+setnames(temp, "Oiics Body Part Code Desc", "Description")
+temp
+})
+
+renderDataTable(datatable(bptable()  , options = list(pageLength = 25,
+                                                          class = "display nowrap")) %>% 
+         formatCurrency(c("Total Cost"), digits = 0, currency = "K $", 
+         before = FALSE) %>%
+      formatStyle(input$ycol, backgroundColor = 'yellow'))
+
+bpplot <- reactive({
+  temp = selectedData()[, list(`Number of Claims` = 
+              length(unique(`Pseudo Claim Id`)),
+              `Total Cost` = 
+              sum(`Actuary Incur Tot`)/1000),
+     by = c( "Oiics Body Part Code Desc 2", "year") ][`Number of Claims`>= (input$mincases)/((input$year[2]-input$year[1])/2+1),]
+temp[, `Claims Rate` := round(`Number of Claims`/(sum(denom[year %in% input$year[1]:input$year[2],]$total.hours)/200000),2)]
+setorderv(temp, input$ycol, order = -1)
+setnames(temp, input$ycol, "yval")
+setnames(temp, "Oiics Body Part Code Desc 2", "Description")
+temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
+})
+
+```
+
+###Source
+```{r}
+
+sourcetable <- reactive({
+  temp = selectedData()[, list(`Number of Claims` = 
+              length(unique(`Pseudo Claim Id`)),
+              `Total Cost` = 
+              sum(`Actuary Incur Tot`)/1000),
+     by = c( "Oiics Srce Code Desc") ][`Number of Claims`>=input$mincases,]
+temp[, `Claims Rate` := round(`Number of Claims`/(sum(denom[year %in% input$year[1]:input$year[2],]$total.hours)/200000),2)]
+setorderv(temp, input$ycol, order = -1)
+setnames(temp, "Oiics Srce Code Desc", "Description")
+temp
+})
+
+renderDataTable(datatable(sourcetable()  , options = list(pageLength = 25,
+                                                          class = "display nowrap")) %>% 
+         formatCurrency(c("Total Cost"), digits = 0, currency = "K $", 
+         before = FALSE) %>%
+      formatStyle(input$ycol, backgroundColor = 'yellow'))
+
+sourceplot <- reactive({
+  temp = selectedData()[, list(`Number of Claims` = 
+              length(unique(`Pseudo Claim Id`)),
+              `Total Cost` = 
+              sum(`Actuary Incur Tot`)/1000),
+     by = c( "Oiics Srce Code Desc 2", "year") ][`Number of Claims`>= (input$mincases)/((input$year[2]-input$year[1])/2+1),]
+temp[, `Claims Rate` := round(`Number of Claims`/(sum(denom[year %in% input$year[1]:input$year[2],]$total.hours)/200000),2)]
+setorderv(temp, input$ycol, order = -1)
+setnames(temp, input$ycol, "yval")
+setnames(temp, "Oiics Srce Code Desc 2", "Description")
+temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
+})
+
+
+```
+
+###Event
+```{r}
+
+eventtable <- reactive({
+  temp = selectedData()[, list(`Number of Claims` = 
+              length(unique(`Pseudo Claim Id`)),
+              `Total Cost` = 
+              sum(`Actuary Incur Tot`)/1000),
+     by = c( "Oiics Accdt Type Code Desc") ][`Number of Claims`>=input$mincases,]
+temp[, `Claims Rate` := round(`Number of Claims`/(sum(denom[year %in% input$year[1]:input$year[2],]$total.hours)/200000),2)]
+setorderv(temp, input$ycol, order = -1)
+setnames(temp, "Oiics Accdt Type Code Desc", "Description")
+temp
+})
+
+renderDataTable(datatable(eventtable()  , 
+                          options = list(pageLength = 25,
+                                         class = "display nowrap")) %>% 
+         formatCurrency(c("Total Cost"), digits = 0, currency = "K $", 
+         before = FALSE) %>%
+      formatStyle(input$ycol, backgroundColor = 'yellow'))
+
+
+eventplot <- reactive({
+  temp = selectedData()[, list(`Number of Claims` = 
+              length(unique(`Pseudo Claim Id`)),
+              `Total Cost` = 
+              sum(`Actuary Incur Tot`)/1000),
+     by = c( "Oiics Accdt Type Code Desc 2", "year") ][`Number of Claims`>= (input$mincases)/((input$year[2]-input$year[1])/2+1),]
+temp[, `Claims Rate` := round(`Number of Claims`/(sum(denom[year %in% input$year[1]:input$year[2],]$total.hours)/200000),2)]
+setorderv(temp, input$ycol, order = -1)
+setnames(temp, input$ycol, "yval")
+setnames(temp, "Oiics Accdt Type Code Desc 2", "Description")
+temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
+})
+
+
+```
+
+Time Series Plot
+=============================
+
+
+Column {.tabset}
+-----------------------------------------------------------------------
+###Nature
+
+```{r}
+
+renderPlot({
+ggplot(natureplot()) + aes(x = year,
+                           y =  yval,
+                           col = Description) + geom_point() +
+  stat_smooth(alpha = 0.1) +
+    ylab(input$ycol) +
+    scale_x_continuous( breaks = input$year[1]:input$year[2]) +
+    theme_light(12) 
+
+})
+
+
+```
+
+###Body Part
+```{r}
+
+renderPlot({
+ggplot(bpplot()) + aes(x = year,
+                           y =  yval,
+                           col = Description) + geom_point() +
+  stat_smooth(alpha = 0.1) +
+    ylab(input$ycol) +
+    scale_x_continuous( breaks = input$year[1]:input$year[2]) +
+    theme_light(12)
+
+})
+
+
+```
+
+###Source
+```{r}
+
+renderPlot({
+ggplot(sourceplot()) + aes(x = year,
+                           y =  yval,
+                           col = Description) + geom_point() +
+  stat_smooth(alpha = 0.1) +
+    ylab(input$ycol) +
+    scale_x_continuous( breaks = input$year[1]:input$year[2]) +
+    theme_light(12)
+
+})
+
+
+```
+
+###Event
+```{r}
+
+renderPlot({
+ggplot(eventplot()) + aes(x = year,
+                           y =  yval,
+                           col = Description) + geom_point() +
+  stat_smooth(alpha = 0.1) +
+    ylab(input$ycol) +
+    scale_x_continuous( breaks = input$year[1]:input$year[2]) +
+    theme_light(12)
+
+})
+
+
+```
+
+Circumstances
+=============================
+
+##Most common circumstances
+
+``` {r}
+
+circumdata <- reactive({
+  
+ 
+  temp = selectedData()[, .N, list(`Oiics Accdt Type Code Desc 2`,
+                `Oiics Srce Code Desc 2`,
+                `Oiics Nat Code Desc 2`,
+                `Oiics Body Part Code Desc 2`)]
+  temp = setorderv(temp[!is.na(N) ], c("N"), 
+                   order = -1, 
+            na.last=FALSE)
+  
+  })
+
+renderDataTable(datatable(circumdata()  , 
+                          options = list(pageLength = 100,
+                                         rownames = F))) 
+ 
+```
+
