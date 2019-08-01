@@ -12,7 +12,7 @@ runtime: shiny
 ```{r global, include=FALSE}
 # load data in 'global' chunk so it can be shared by all users of the dashboard
 library(pacman)
-p_load(datasets, ggplot2, data.table, shiny, shinyWidgets, readxl,scales, plyr,stringr,DT)
+p_load(datasets, ggplot2, data.table, shiny, shinyWidgets, readxl,scales, plyr,stringr,DT,highcharter, broom)
 
 soc = setDT(read.csv("soc-structure-2000.csv"))
 
@@ -65,12 +65,10 @@ data[, year := as.numeric(as.character((`Injry Date Year`)))]
 library(flexdashboard)
 ```
 
-General Claims Descriptions
-===================================== 
 
-Inputs {.sidebar}
------------------------------------------------------------------------
 
+Inputs {.sidebar data-width=300}
+===============================
 
 
 ```{r}
@@ -80,9 +78,11 @@ Inputs {.sidebar}
 #increase font
 #add tooltip
 #add masking to circumstances tool
+#is there is difference in coding practice by time?
+#add overall trend line
 
 #width of pickerInput
-widthPI = 25
+widthPI = 22
 
 my_choicesStatus <- data.table(choices = str_to_title(unique(data$`Status Desc`)))
 #setkey(my_choicesStatus, choices)
@@ -222,6 +222,8 @@ pickerInput("event", "Event:",
 
 ```
 
+General Claims Descriptions
+===================================== 
 
 Column {.tabset}
 -----------------------------------------------------------------------
@@ -295,11 +297,15 @@ natureplot <- reactive({
               `Total Cost` = 
               sum(`Actuary Incur Tot`)/1000),
      by = c( "Oiics Nat Code Desc 2", "year") ][`Number of Claims`>=((input$year[2]-input$year[1])/2+1),]
-temp[, `Claims Rate` := round(`Number of Claims`/(sum(denom[year %in% input$year[1]:input$year[2],]$total.hours)/200000),2)]
+  setkey(temp, year)
+  setkey(denom, year)
+  temp = denom[temp]
+temp[, `Claims Rate` := round(`Number of Claims`/(total.hours/200000),2)]
 setorderv(temp, input$ycol, order = -1)
 setnames(temp, input$ycol, "yval")
 setnames(temp, "Oiics Nat Code Desc 2", "Description")
-temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
+temp = temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
+temp
 })
 
 
@@ -333,11 +339,17 @@ bpplot <- reactive({
               `Total Cost` = 
               sum(`Actuary Incur Tot`)/1000),
      by = c( "Oiics Body Part Code Desc 2", "year") ][`Number of Claims`>= (input$mincases)/((input$year[2]-input$year[1])/2+1),]
-temp[, `Claims Rate` := round(`Number of Claims`/(sum(denom[year %in% input$year[1]:input$year[2],]$total.hours)/200000),2)]
+# temp[, `Claims Rate` := round(`Number of Claims`/(sum(denom[year %in% input$year[1]:input$year[2],]$total.hours)/200000),2)]
+setkey(temp, year)
+  setkey(denom, year)
+  temp = denom[temp]
+temp[, `Claims Rate` := round(`Number of Claims`/(total.hours/200000),2)]
+  
 setorderv(temp, input$ycol, order = -1)
 setnames(temp, input$ycol, "yval")
 setnames(temp, "Oiics Body Part Code Desc 2", "Description")
-temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
+temp = temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
+temp
 })
 
 ```
@@ -369,11 +381,15 @@ sourceplot <- reactive({
               `Total Cost` = 
               sum(`Actuary Incur Tot`)/1000),
      by = c( "Oiics Srce Code Desc 2", "year") ][`Number of Claims`>= (input$mincases)/((input$year[2]-input$year[1])/2+1),]
-temp[, `Claims Rate` := round(`Number of Claims`/(sum(denom[year %in% input$year[1]:input$year[2],]$total.hours)/200000),2)]
+setkey(temp, year)
+  setkey(denom, year)
+  temp = denom[temp]
+temp[, `Claims Rate` := round(`Number of Claims`/(total.hours/200000),2)]
 setorderv(temp, input$ycol, order = -1)
 setnames(temp, input$ycol, "yval")
 setnames(temp, "Oiics Srce Code Desc 2", "Description")
-temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
+temp = temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
+temp
 })
 
 
@@ -408,11 +424,15 @@ eventplot <- reactive({
               `Total Cost` = 
               sum(`Actuary Incur Tot`)/1000),
      by = c( "Oiics Accdt Type Code Desc 2", "year") ][`Number of Claims`>= (input$mincases)/((input$year[2]-input$year[1])/2+1),]
-temp[, `Claims Rate` := round(`Number of Claims`/(sum(denom[year %in% input$year[1]:input$year[2],]$total.hours)/200000),2)]
+setkey(temp, year)
+  setkey(denom, year)
+  temp = denom[temp]
+temp[, `Claims Rate` := round(`Number of Claims`/(total.hours/200000),2)]
 setorderv(temp, input$ycol, order = -1)
 setnames(temp, input$ycol, "yval")
 setnames(temp, "Oiics Accdt Type Code Desc 2", "Description")
-temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
+temp = temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
+temp
 })
 
 
@@ -428,14 +448,52 @@ Column {.tabset}
 
 ```{r}
 
-renderPlot({
-ggplot(natureplot()) + aes(x = year,
-                           y =  yval,
-                           col = Description) + geom_point() +
-  stat_smooth(alpha = 0.1) +
-    ylab(input$ycol) +
-    scale_x_continuous( breaks = input$year[1]:input$year[2]) +
-    theme_light(12) 
+renderHighchart ({
+  
+ naturevalues = natureplot()
+ 
+lapply(unique(naturevalues$Description), FUN = function(des)
+  {
+    try({modlss <- loess(yval ~ year, 
+                    data = naturevalues[Description%in% des ,])
+    pred = predict(modlss, naturevalues[Description%in% des ,], se = T)
+    naturevalues[Description%in% des , fit := pred$fit]
+    naturevalues[Description%in% des , se := pred$se]})
+  }
+    )
+ 
+setkey(naturevalues, Description, year)
+
+namesvals = unique(naturevalues$Description)
+
+hc <- highchart() %>% 
+  hc_add_series(naturevalues, type = "scatter",
+                 hcaes(x = year, y = yval,  group = Description),
+                id = namesvals) %>%
+  # #hc_add_series(mylist[[2]], type = "line", hcaes(x = year, y = .fitted, group = Description),
+  #           name = "Trend", id = "Trend") %>%
+  hc_add_series(naturevalues, type = "areasplinerange",
+                hcaes(x = year, low = fit - 2*se,
+                      high = fit + 2*se, group = Description),
+                       linkedTo = namesvals,
+                 color = hex_to_rgba("gray", 0.1),  # put a semi transparent color
+                
+    zIndex = -3 # this is for put the series in a back so the points are showed first
+                )%>%
+  hc_yAxis(min = 0)  %>%
+    hc_xAxis( 
+         lineWith = 5, 
+         labels = list(align = "left", 
+                       style = list(
+                          fontSize = "16px", 
+                          fontWeight = "bold",
+                          color = "blue"
+                      )))%>%
+hc_tooltip(formatter= JS("function () { return 'Injury Nature:<br />  ' + 
+   this.series.name }"))
+
+
+hc
 
 })
 
@@ -445,16 +503,55 @@ ggplot(natureplot()) + aes(x = year,
 ###Body Part
 ```{r}
 
-renderPlot({
-ggplot(bpplot()) + aes(x = year,
-                           y =  yval,
-                           col = Description) + geom_point() +
-  stat_smooth(alpha = 0.1) +
-    ylab(input$ycol) +
-    scale_x_continuous( breaks = input$year[1]:input$year[2]) +
-    theme_light(12)
+renderHighchart ({
+  
+ naturevalues = bpplot()
+ 
+lapply(unique(naturevalues$Description), FUN = function(des)
+  {
+    try({modlss <- loess(yval ~ year, 
+                    data = naturevalues[Description%in% des ,])
+    pred = predict(modlss, naturevalues[Description%in% des ,], se = T)
+    naturevalues[Description%in% des , fit := pred$fit]
+    naturevalues[Description%in% des , se := pred$se]})
+  }
+    )
+ 
+setkey(naturevalues, Description, year)
+
+namesvals = unique(naturevalues$Description)
+
+hc <- highchart() %>% 
+  hc_add_series(naturevalues, type = "scatter",
+                 hcaes(x = year, y = yval,  group = Description),
+                id = namesvals) %>%
+  # #hc_add_series(mylist[[2]], type = "line", hcaes(x = year, y = .fitted, group = Description),
+  #           name = "Trend", id = "Trend") %>%
+  hc_add_series(naturevalues, type = "areasplinerange",
+                hcaes(x = year, low = fit - 2*se,
+                      high = fit + 2*se, group = Description),
+                       linkedTo = namesvals,
+                 color = hex_to_rgba("gray", 0.1),  # put a semi transparent color
+                
+    zIndex = -3 # this is for put the series in a back so the points are showed first
+                )%>%
+  hc_yAxis(min = 0)  %>%
+    hc_xAxis( 
+         lineWith = 5, 
+         labels = list(align = "left", 
+                       style = list(
+                          fontSize = "16px", 
+                          fontWeight = "bold",
+                          color = "blue"
+                      )))%>%
+hc_tooltip(formatter= JS("function () { return 'Injury Nature:<br />  ' + 
+   this.series.name }"))
+
+
+hc
 
 })
+
 
 
 ```
@@ -462,14 +559,52 @@ ggplot(bpplot()) + aes(x = year,
 ###Source
 ```{r}
 
-renderPlot({
-ggplot(sourceplot()) + aes(x = year,
-                           y =  yval,
-                           col = Description) + geom_point() +
-  stat_smooth(alpha = 0.1) +
-    ylab(input$ycol) +
-    scale_x_continuous( breaks = input$year[1]:input$year[2]) +
-    theme_light(12)
+renderHighchart ({
+  
+ naturevalues = sourceplot()
+ 
+lapply(unique(naturevalues$Description), FUN = function(des)
+  {
+    try({modlss <- loess(yval ~ year, 
+                    data = naturevalues[Description%in% des ,])
+    pred = predict(modlss, naturevalues[Description%in% des ,], se = T)
+    naturevalues[Description%in% des , fit := pred$fit]
+    naturevalues[Description%in% des , se := pred$se]})
+  }
+    )
+ 
+setkey(naturevalues, Description, year)
+
+namesvals = unique(naturevalues$Description)
+
+hc <- highchart() %>% 
+  hc_add_series(naturevalues, type = "scatter",
+                 hcaes(x = year, y = yval,  group = Description),
+                id = namesvals) %>%
+  # #hc_add_series(mylist[[2]], type = "line", hcaes(x = year, y = .fitted, group = Description),
+  #           name = "Trend", id = "Trend") %>%
+  hc_add_series(naturevalues, type = "areasplinerange",
+                hcaes(x = year, low = fit - 2*se,
+                      high = fit + 2*se, group = Description),
+                       linkedTo = namesvals,
+                 color = hex_to_rgba("gray", 0.1),  # put a semi transparent color
+                
+    zIndex = -3 # this is for put the series in a back so the points are showed first
+                )%>%
+  hc_yAxis(min = 0)  %>%
+    hc_xAxis( 
+         lineWith = 5, 
+         labels = list(align = "left", 
+                       style = list(
+                          fontSize = "16px", 
+                          fontWeight = "bold",
+                          color = "blue"
+                      )))%>%
+hc_tooltip(formatter= JS("function () { return 'Injury Nature:<br />  ' + 
+   this.series.name }"))
+
+
+hc
 
 })
 
@@ -479,14 +614,52 @@ ggplot(sourceplot()) + aes(x = year,
 ###Event
 ```{r}
 
-renderPlot({
-ggplot(eventplot()) + aes(x = year,
-                           y =  yval,
-                           col = Description) + geom_point() +
-  stat_smooth(alpha = 0.1) +
-    ylab(input$ycol) +
-    scale_x_continuous( breaks = input$year[1]:input$year[2]) +
-    theme_light(12)
+renderHighchart ({
+  
+ naturevalues = eventplot()
+ 
+lapply(unique(naturevalues$Description), FUN = function(des)
+  {
+    try({modlss <- loess(yval ~ year, 
+                    data = naturevalues[Description%in% des ,])
+    pred = predict(modlss, naturevalues[Description%in% des ,], se = T)
+    naturevalues[Description%in% des , fit := pred$fit]
+    naturevalues[Description%in% des , se := pred$se]})
+  }
+    )
+ 
+setkey(naturevalues, Description, year)
+
+namesvals = unique(naturevalues$Description)
+
+hc <- highchart() %>% 
+  hc_add_series(naturevalues, type = "scatter",
+                 hcaes(x = year, y = yval,  group = Description),
+                id = namesvals) %>%
+  # #hc_add_series(mylist[[2]], type = "line", hcaes(x = year, y = .fitted, group = Description),
+  #           name = "Trend", id = "Trend") %>%
+  hc_add_series(naturevalues, type = "areasplinerange",
+                hcaes(x = year, low = fit - 2*se,
+                      high = fit + 2*se, group = Description),
+                       linkedTo = namesvals,
+                 color = hex_to_rgba("gray", 0.1),  # put a semi transparent color
+                
+    zIndex = -3 # this is for put the series in a back so the points are showed first
+                )%>%
+  hc_yAxis(min = 0)  %>%
+    hc_xAxis( 
+         lineWith = 5, 
+         labels = list(align = "left", 
+                       style = list(
+                          fontSize = "16px", 
+                          fontWeight = "bold",
+                          color = "blue"
+                      )))%>%
+hc_tooltip(formatter= JS("function () { return 'Injury Nature:<br />  ' + 
+   this.series.name }"))
+
+
+hc
 
 })
 
@@ -504,18 +677,26 @@ circumdata <- reactive({
   
  
   temp = selectedData()[, .N, list(`Oiics Accdt Type Code Desc 2`,
-                `Oiics Srce Code Desc 2`,
-                `Oiics Nat Code Desc 2`,
-                `Oiics Body Part Code Desc 2`)]
+                `Oiics Srce Code Desc 3`,
+                `Oiics Nat Code Desc 3`,
+                `Oiics Body Part Code Desc`)]
   temp = setorderv(temp[!is.na(N) ], c("N"), 
                    order = -1, 
             na.last=FALSE)
+  temp[N>=5,]
   
   })
 
 renderDataTable(datatable(circumdata()  , 
                           options = list(pageLength = 100,
                                          rownames = F))) 
+
+
+# dig = 2
+# sum(str_count(data$`Injry Oiics Srce Code`)<dig)
+# sum(str_count(data$`Injry Oiics Nat Code`)<dig)
+# sum(str_count(data$`Injry Oiics Body Part Code`)<dig)
+# sum(str_count(data$`Injry Oiics Accdt Type Code`)<dig)
  
 ```
 
