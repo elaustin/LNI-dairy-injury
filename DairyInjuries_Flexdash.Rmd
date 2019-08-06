@@ -4,7 +4,7 @@ output:
   flexdashboard::flex_dashboard:
     orientation: columns
     social: menu
-    source_code: embed
+    #source_code: embed
     theme: cerulean
 runtime: shiny
 ---
@@ -12,7 +12,7 @@ runtime: shiny
 ```{r global, include=FALSE}
 # load data in 'global' chunk so it can be shared by all users of the dashboard
 library(pacman)
-p_load(datasets, ggplot2, data.table, shiny, shinyWidgets, readxl,scales, plyr,stringr,DT,highcharter, broom)
+p_load(datasets, ggplot2, data.table, shiny, shinyWidgets, readxl,scales, plyr,stringr,DT,highcharter, broom, flexdashboard)
 
 soc = setDT(read.csv("soc-structure-2000.csv"))
 
@@ -20,7 +20,7 @@ data = data.table(read_excel("../LNI data request/130656-Records.xlsx", sheet = 
 
 data$`Oiics Accdt Type Code 3` = str_pad(data$`Oiics Accdt Type Code 3`, 3, pad = "0")
 
-denom = data.table(read_excel("../LNI data request/130656-Records.xlsx", sheet =  " SF Hours Class 7301-00", skip = 4))
+denom = data.table(read_excel("../LNI data request/130656-Records.xlsx", sheet =  " SF Hours Class 7301-00", skip = 3))
 setnames(denom, c("year", "acct.id.q1","total.hours.q1",
                   "acct.id.q2","total.hours.q2",
                   "acct.id.q3","total.hours.q3",
@@ -58,13 +58,11 @@ oiics_bp = readRDS("oiics_bp.RDS")
 oiics_event = readRDS("oiics_event.RDS")
 
 data[, year := as.numeric(as.character((`Injry Date Year`)))]
+data = data[`Risk Main Sub` == "730100", ]
+data[,"Days Paid" := `Clm Tl Day Pd Drvd Qty`]
+
 
 ```
-
-```{r setup, include=FALSE}
-library(flexdashboard)
-```
-
 
 
 Inputs {.sidebar data-width=300}
@@ -105,8 +103,9 @@ pickerInput('status', 'Claims Status', unique(my_choicesStatus2),
 selectInput('ycol', 'Plotting Variable', choices = 
               list("Claims Rate (per 100 workers)" = "Claims Rate",
                    "Number of Claims" = "Number of Claims",
-                   "Cost (Thousands of Dollars)" = "Total Cost"),
-            selected="Number of Claims", multiple = F)
+                   "Cost ($)" = "Total Cost",
+                   "Paid Days Off" =  "Days Paid"),
+            selected="Claims Rate", multiple = F)
 
 sliderInput("year", "Year:",
             min = min(data$year), max = max(data$year),
@@ -115,9 +114,9 @@ sliderInput("year", "Year:",
                       max(data$year)))
 
 sliderInput("mincases", "Minimum number of Cases:", min = 1,
-            max = round_any(400,10, ceiling),
+            max = round_any(50,10, ceiling),
             step = 10,
-            value = 10)
+            value = 1)
 
 my_choices <- data.table(choices = paste0(oiics_nature$CASE_CODE_TITLE, ": ",
                     oiics_nature$CASE_CODE),
@@ -274,6 +273,8 @@ selectedData <- reactive({
 naturetable <- reactive({
   temp = selectedData()[, list(`Number of Claims` = 
               length(unique(`Pseudo Claim Id`)),
+              `Days Paid` = 
+              sum(`Days Paid`),
               `Total Cost` = 
               sum(`Actuary Incur Tot`)/1000),
      by = c( "Oiics Nat Code Desc 2") ][`Number of Claims`>=input$mincases,]
@@ -285,7 +286,7 @@ temp
   
                       
   
-renderDataTable(datatable(naturetable()  , options = list(pageLength = 25,
+renderDataTable(datatable(naturetable()  , options = list(pageLength = 10,
                                                           class = "display nowrap")) %>% 
          formatCurrency(c("Total Cost"), digits = 0, currency = "K $", 
          before = FALSE) %>%
@@ -294,16 +295,17 @@ renderDataTable(datatable(naturetable()  , options = list(pageLength = 25,
 natureplot <- reactive({
   temp = selectedData()[, list(`Number of Claims` = 
               length(unique(`Pseudo Claim Id`)),
+              `Days Paid` = sum(`Days Paid` ),
               `Total Cost` = 
-              sum(`Actuary Incur Tot`)/1000),
-     by = c( "Oiics Nat Code Desc 2", "year") ][`Number of Claims`>=((input$year[2]-input$year[1])/2+1),]
+              sum(`Actuary Incur Tot`)),
+     by = c( "Oiics Nat Code Desc", "year") ][`Number of Claims`>=((input$year[2]-input$year[1])/2+1),]
   setkey(temp, year)
   setkey(denom, year)
   temp = denom[temp]
 temp[, `Claims Rate` := round(`Number of Claims`/(total.hours/200000),2)]
 setorderv(temp, input$ycol, order = -1)
 setnames(temp, input$ycol, "yval")
-setnames(temp, "Oiics Nat Code Desc 2", "Description")
+setnames(temp, "Oiics Nat Code Desc", "Description")
 temp = temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
 temp
 })
@@ -318,6 +320,8 @@ temp
 bptable <- reactive({
   temp = selectedData()[, list(`Number of Claims` = 
               length(unique(`Pseudo Claim Id`)),
+              `Days Paid` = 
+              sum(`Days Paid`),
               `Total Cost` = 
               sum(`Actuary Incur Tot`)/1000),
      by = c( "Oiics Body Part Code Desc") ][`Number of Claims`>=input$mincases,]
@@ -327,7 +331,7 @@ setnames(temp, "Oiics Body Part Code Desc", "Description")
 temp
 })
 
-renderDataTable(datatable(bptable()  , options = list(pageLength = 25,
+renderDataTable(datatable(bptable()  , options = list(pageLength = 10,
                                                           class = "display nowrap")) %>% 
          formatCurrency(c("Total Cost"), digits = 0, currency = "K $", 
          before = FALSE) %>%
@@ -336,9 +340,11 @@ renderDataTable(datatable(bptable()  , options = list(pageLength = 25,
 bpplot <- reactive({
   temp = selectedData()[, list(`Number of Claims` = 
               length(unique(`Pseudo Claim Id`)),
+              `Days Paid` = 
+              sum(`Days Paid`),
               `Total Cost` = 
-              sum(`Actuary Incur Tot`)/1000),
-     by = c( "Oiics Body Part Code Desc 2", "year") ][`Number of Claims`>= (input$mincases)/((input$year[2]-input$year[1])/2+1),]
+              sum(`Actuary Incur Tot`)),
+     by = c( "Oiics Body Part Code Desc", "year") ][`Number of Claims`>= (input$mincases)/((input$year[2]-input$year[1])/2+1),]
 # temp[, `Claims Rate` := round(`Number of Claims`/(sum(denom[year %in% input$year[1]:input$year[2],]$total.hours)/200000),2)]
 setkey(temp, year)
   setkey(denom, year)
@@ -347,7 +353,7 @@ temp[, `Claims Rate` := round(`Number of Claims`/(total.hours/200000),2)]
   
 setorderv(temp, input$ycol, order = -1)
 setnames(temp, input$ycol, "yval")
-setnames(temp, "Oiics Body Part Code Desc 2", "Description")
+setnames(temp, "Oiics Body Part Code Desc", "Description")
 temp = temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
 temp
 })
@@ -360,6 +366,8 @@ temp
 sourcetable <- reactive({
   temp = selectedData()[, list(`Number of Claims` = 
               length(unique(`Pseudo Claim Id`)),
+              `Days Paid` = 
+              sum(`Days Paid`),
               `Total Cost` = 
               sum(`Actuary Incur Tot`)/1000),
      by = c( "Oiics Srce Code Desc") ][`Number of Claims`>=input$mincases,]
@@ -369,7 +377,7 @@ setnames(temp, "Oiics Srce Code Desc", "Description")
 temp
 })
 
-renderDataTable(datatable(sourcetable()  , options = list(pageLength = 25,
+renderDataTable(datatable(sourcetable()  , options = list(pageLength = 10,
                                                           class = "display nowrap")) %>% 
          formatCurrency(c("Total Cost"), digits = 0, currency = "K $", 
          before = FALSE) %>%
@@ -378,16 +386,18 @@ renderDataTable(datatable(sourcetable()  , options = list(pageLength = 25,
 sourceplot <- reactive({
   temp = selectedData()[, list(`Number of Claims` = 
               length(unique(`Pseudo Claim Id`)),
+              `Days Paid` = 
+              sum(`Days Paid`),
               `Total Cost` = 
-              sum(`Actuary Incur Tot`)/1000),
-     by = c( "Oiics Srce Code Desc 2", "year") ][`Number of Claims`>= (input$mincases)/((input$year[2]-input$year[1])/2+1),]
+              sum(`Actuary Incur Tot`)),
+     by = c( "Oiics Srce Code Desc", "year") ][`Number of Claims`>= (input$mincases)/((input$year[2]-input$year[1])/2+1),]
 setkey(temp, year)
   setkey(denom, year)
   temp = denom[temp]
 temp[, `Claims Rate` := round(`Number of Claims`/(total.hours/200000),2)]
 setorderv(temp, input$ycol, order = -1)
 setnames(temp, input$ycol, "yval")
-setnames(temp, "Oiics Srce Code Desc 2", "Description")
+setnames(temp, "Oiics Srce Code Desc", "Description")
 temp = temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
 temp
 })
@@ -401,6 +411,8 @@ temp
 eventtable <- reactive({
   temp = selectedData()[, list(`Number of Claims` = 
               length(unique(`Pseudo Claim Id`)),
+              `Days Paid` = 
+              sum(`Days Paid`),
               `Total Cost` = 
               sum(`Actuary Incur Tot`)/1000),
      by = c( "Oiics Accdt Type Code Desc") ][`Number of Claims`>=input$mincases,]
@@ -411,7 +423,7 @@ temp
 })
 
 renderDataTable(datatable(eventtable()  , 
-                          options = list(pageLength = 25,
+                          options = list(pageLength = 10,
                                          class = "display nowrap")) %>% 
          formatCurrency(c("Total Cost"), digits = 0, currency = "K $", 
          before = FALSE) %>%
@@ -421,16 +433,18 @@ renderDataTable(datatable(eventtable()  ,
 eventplot <- reactive({
   temp = selectedData()[, list(`Number of Claims` = 
               length(unique(`Pseudo Claim Id`)),
+              `Days Paid` = 
+              sum(`Days Paid`),
               `Total Cost` = 
-              sum(`Actuary Incur Tot`)/1000),
-     by = c( "Oiics Accdt Type Code Desc 2", "year") ][`Number of Claims`>= (input$mincases)/((input$year[2]-input$year[1])/2+1),]
+              sum(`Actuary Incur Tot`)),
+     by = c( "Oiics Accdt Type Code Desc", "year") ][`Number of Claims`>= (input$mincases)/((input$year[2]-input$year[1])/2+1),]
 setkey(temp, year)
   setkey(denom, year)
   temp = denom[temp]
 temp[, `Claims Rate` := round(`Number of Claims`/(total.hours/200000),2)]
 setorderv(temp, input$ycol, order = -1)
 setnames(temp, input$ycol, "yval")
-setnames(temp, "Oiics Accdt Type Code Desc 2", "Description")
+setnames(temp, "Oiics Accdt Type Code Desc", "Description")
 temp = temp[!is.na(Description) & Description %in% unique(temp$Description)[1:11]]
 temp
 })
@@ -452,6 +466,8 @@ renderHighchart ({
   
  naturevalues = natureplot()
  
+ if(nrow(naturevalues)>1){
+ 
 lapply(unique(naturevalues$Description), FUN = function(des)
   {
     try({modlss <- loess(yval ~ year, 
@@ -472,14 +488,6 @@ hc <- highchart() %>%
                 id = namesvals) %>%
   # #hc_add_series(mylist[[2]], type = "line", hcaes(x = year, y = .fitted, group = Description),
   #           name = "Trend", id = "Trend") %>%
-  hc_add_series(naturevalues, type = "areasplinerange",
-                hcaes(x = year, low = fit - 2*se,
-                      high = fit + 2*se, group = Description),
-                       linkedTo = namesvals,
-                 color = hex_to_rgba("gray", 0.1),  # put a semi transparent color
-                
-    zIndex = -3 # this is for put the series in a back so the points are showed first
-                )%>%
   hc_yAxis(min = 0)  %>%
     hc_xAxis( 
          lineWith = 5, 
@@ -492,8 +500,19 @@ hc <- highchart() %>%
 hc_tooltip(formatter= JS("function () { return 'Injury Nature:<br />  ' + 
    this.series.name }"))
 
+if(!is.null(naturevalues$fit)){
+hc <- hc %>% hc_add_series(naturevalues, type = "areasplinerange",
+                hcaes(x = year, low = fit - 2*se,
+                      high = fit + 2*se, group = Description),
+                       linkedTo = namesvals,
+                 color = hex_to_rgba("gray", 0.1),  # put a semi transparent color
+                
+    zIndex = -3 # this is for put the series in a back so the points are showed first
+                )
+}
 
-hc
+
+hc}
 
 })
 
@@ -507,6 +526,8 @@ renderHighchart ({
   
  naturevalues = bpplot()
  
+ if(nrow(naturevalues)>1){
+ 
 lapply(unique(naturevalues$Description), FUN = function(des)
   {
     try({modlss <- loess(yval ~ year, 
@@ -527,15 +548,7 @@ hc <- highchart() %>%
                 id = namesvals) %>%
   # #hc_add_series(mylist[[2]], type = "line", hcaes(x = year, y = .fitted, group = Description),
   #           name = "Trend", id = "Trend") %>%
-  hc_add_series(naturevalues, type = "areasplinerange",
-                hcaes(x = year, low = fit - 2*se,
-                      high = fit + 2*se, group = Description),
-                       linkedTo = namesvals,
-                 color = hex_to_rgba("gray", 0.1),  # put a semi transparent color
-                
-    zIndex = -3 # this is for put the series in a back so the points are showed first
-                )%>%
-  hc_yAxis(min = 0)  %>%
+   hc_yAxis(min = 0)  %>%
     hc_xAxis( 
          lineWith = 5, 
          labels = list(align = "left", 
@@ -544,11 +557,24 @@ hc <- highchart() %>%
                           fontWeight = "bold",
                           color = "blue"
                       )))%>%
-hc_tooltip(formatter= JS("function () { return 'Injury Nature:<br />  ' + 
+hc_tooltip(formatter= JS("function () { return 'Body Part:<br />  ' + 
    this.series.name }"))
+
+if(!is.null(naturevalues$fit)){
+
+ hc <- hc %>% hc_add_series(naturevalues, type = "areasplinerange",
+                hcaes(x = year, low = fit - 2*se,
+                      high = fit + 2*se, group = Description),
+                       linkedTo = namesvals,
+                 color = hex_to_rgba("gray", 0.1),  # put a semi transparent color
+                
+    zIndex = -3 # this is for put the series in a back so the points are showed first
+                )
+}
 
 
 hc
+}
 
 })
 
@@ -563,6 +589,8 @@ renderHighchart ({
   
  naturevalues = sourceplot()
  
+ if(nrow(naturevalues)>1){
+ 
 lapply(unique(naturevalues$Description), FUN = function(des)
   {
     try({modlss <- loess(yval ~ year, 
@@ -583,14 +611,6 @@ hc <- highchart() %>%
                 id = namesvals) %>%
   # #hc_add_series(mylist[[2]], type = "line", hcaes(x = year, y = .fitted, group = Description),
   #           name = "Trend", id = "Trend") %>%
-  hc_add_series(naturevalues, type = "areasplinerange",
-                hcaes(x = year, low = fit - 2*se,
-                      high = fit + 2*se, group = Description),
-                       linkedTo = namesvals,
-                 color = hex_to_rgba("gray", 0.1),  # put a semi transparent color
-                
-    zIndex = -3 # this is for put the series in a back so the points are showed first
-                )%>%
   hc_yAxis(min = 0)  %>%
     hc_xAxis( 
          lineWith = 5, 
@@ -600,11 +620,22 @@ hc <- highchart() %>%
                           fontWeight = "bold",
                           color = "blue"
                       )))%>%
-hc_tooltip(formatter= JS("function () { return 'Injury Nature:<br />  ' + 
+hc_tooltip(formatter= JS("function () { return 'Injury Source:<br />  ' + 
    this.series.name }"))
 
+if(!is.null(naturevalues$fit)){
 
-hc
+ hc <- hc %>% hc_add_series(naturevalues, type = "areasplinerange",
+                hcaes(x = year, low = fit - 2*se,
+                      high = fit + 2*se, group = Description),
+                       linkedTo = namesvals,
+                 color = hex_to_rgba("gray", 0.1),  # put a semi transparent color
+                
+    zIndex = -3 # this is for put the series in a back so the points are showed first
+                )
+}
+
+hc}
 
 })
 
@@ -618,6 +649,8 @@ renderHighchart ({
   
  naturevalues = eventplot()
  
+ if(nrow(naturevalues)>1){
+ 
 lapply(unique(naturevalues$Description), FUN = function(des)
   {
     try({modlss <- loess(yval ~ year, 
@@ -638,14 +671,7 @@ hc <- highchart() %>%
                 id = namesvals) %>%
   # #hc_add_series(mylist[[2]], type = "line", hcaes(x = year, y = .fitted, group = Description),
   #           name = "Trend", id = "Trend") %>%
-  hc_add_series(naturevalues, type = "areasplinerange",
-                hcaes(x = year, low = fit - 2*se,
-                      high = fit + 2*se, group = Description),
-                       linkedTo = namesvals,
-                 color = hex_to_rgba("gray", 0.1),  # put a semi transparent color
-                
-    zIndex = -3 # this is for put the series in a back so the points are showed first
-                )%>%
+  
   hc_yAxis(min = 0)  %>%
     hc_xAxis( 
          lineWith = 5, 
@@ -655,14 +681,91 @@ hc <- highchart() %>%
                           fontWeight = "bold",
                           color = "blue"
                       )))%>%
-hc_tooltip(formatter= JS("function () { return 'Injury Nature:<br />  ' + 
+hc_tooltip(formatter= JS("function () { return 'Event:<br />  ' + 
    this.series.name }"))
+
+if(!is.null(naturevalues$fit)){
+
+ hc <- hc %>% hc_add_series(naturevalues, type = "areasplinerange",
+                hcaes(x = year, low = fit - 2*se,
+                      high = fit + 2*se, group = Description),
+                       linkedTo = namesvals,
+                 color = hex_to_rgba("gray", 0.1),  # put a semi transparent color
+                
+    zIndex = -3 # this is for put the series in a back so the points are showed first
+                )
+}
 
 
 hc
+}
 
 })
 
+
+```
+
+### Overall Trend
+
+```{r}
+
+
+renderHighchart ({
+  
+ naturevalues = copy(natureplot())
+ if(nrow(naturevalues)>1){
+ 
+ naturevalues[, yval := sum(yval), by = year]
+ 
+
+    try({modlss <- loess(yval ~ year, 
+                    data = naturevalues)
+    pred = predict(modlss, naturevalues, se = T)
+    naturevalues[ , fit := pred$fit]
+    naturevalues[ , se := pred$se]})
+ 
+
+ 
+ 
+setkey(naturevalues, year)
+
+
+
+hc <- highchart() %>% 
+  hc_add_series(naturevalues, type = "scatter",
+                 hcaes(x = year, y = yval),
+                id = "Rate", name = input$ycol) %>%
+  # #hc_add_series(mylist[[2]], type = "line", hcaes(x = year, y = .fitted, group = Description),
+  #           name = "Trend", id = "Trend") %>%
+  
+  hc_yAxis(min = min(naturevalues$yval, na.rm=T) ) %>%
+    hc_xAxis( 
+         lineWith = 5, 
+         labels = list(align = "left", 
+                       style = list(
+                          fontSize = "16px", 
+                          fontWeight = "bold",
+                          color = "blue"
+                      )))%>%
+hc_tooltip(formatter= JS("function () { return this.series.name }"))
+
+if(!is.null(naturevalues$fit)){
+
+ hc <- hc %>% hc_add_series(naturevalues, type = "areasplinerange",
+                hcaes(x = year, low = fit - 2*se,
+                      high = fit + 2*se),
+                       linkedTo = "Rate", name = input$ycol,
+                 color = hex_to_rgba("gray", 0.1),  # put a semi transparent color
+                
+    zIndex = -3 # this is for put the series in a back so the points are showed first
+                )
+}
+
+
+hc
+}
+
+})
 
 ```
 
